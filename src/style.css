@@ -1,12 +1,10 @@
-root {
+:root {
   font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
   line-height: 1.5;
   font-weight: 400;
-
   color-scheme: light dark;
-  color: rgba(255, 255, 255, 0.87);
-  background-color: #242424;
-
+  color: #000000;
+  background-color: rgb(255, 255, 255);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -48,6 +46,19 @@ h1 {
   height: 80vh;
 }
 
+/* ivnentory coin count styling */
+#coinCountText {
+  font-size: 1.5em;
+  font-weight: bold;
+  margin-top: 0.5em;
+  color: rgb(219, 174, 27);
+  background-color: #ffffff;
+  padding: 0.5em;
+  border-radius: 8px;
+  text-align: center;
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+}
+
 button {
   border-radius: 8px;
   border: 1px solid transparent;
@@ -55,9 +66,8 @@ button {
   font-size: 1em;
   font-weight: 500;
   font-family: inherit;
-  background-color: #1a1a1a;
   cursor: pointer;
-  transition: border-color 0.25s;
+  transition: border-color 0.25s, background-color 0.25s;
 }
 
 button:hover {
@@ -67,6 +77,32 @@ button:hover {
 button:focus,
 button:focus-visible {
   outline: 4px auto -webkit-focus-ring-color;
+}
+
+/* take button styling */
+#take {
+  background-color: #007bff;
+  color: #ffffff;
+}
+#take:hover {
+  background-color: #0056b3;
+}
+
+/* give button styling */
+#give {
+  background-color: #ff4d4d;
+  color: #ffffff;
+}
+#give:hover {
+  background-color: #cc0000;
+}
+
+/* makes cache cells on map green border yellow squares. */
+.leaflet-interactive {
+  fill: rgb(219, 174, 27);
+  fill-opacity: 0.5;
+  stroke: green;
+  stroke-opacity: 0.8;
 }
 
 @media (prefers-color-scheme: light) {

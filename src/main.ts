@@ -1,79 +1,70 @@
 // @deno-types="npm:@types/leaflet@^1.9.14"
 import leaflet from "leaflet";
 const app = document.querySelector<HTMLDivElement>("#app")!;
-
 import "leaflet/dist/leaflet.css";
 import "./style.css";
 import "./leafletWorkaround.ts";
 import luck from "./luck.ts";
 
-// gameplay parameters
+// parameters
 const GAMEPLAY_ZOOM_LEVEL = 19;
 const TILE_DEGREES = 1e-4;
-const NEIGHBORHOOD_SIZE = 8; // 8 cells distance out
-const CACHE_SPAWN_PROBABILITY = 0.1; // cache spawn chance
-let coinCount = 0;
+const NEIGHBORHOOD_SIZE = 8;
+const CACHE_SPAWN_PROBABILITY = 0.1;
+const OAKES_CLASSROOM = leaflet.latLng(36.98949379578401, -122.06277128548504);
 
-// creates map
+let serialCounter = 0;
+const playerCoins: GeoCoin[] = [];
+
+// key types
 interface Cell {
   i: number;
   j: number;
 }
-const origin = {
-  i: 0,
-  j: 0,
-};
-const originLeaf = leaflet.latLng(origin.i, origin.j);
-const playerMarker = leaflet.marker(originLeaf);
-const map = leaflet.map(document.getElementById("map")!, {
-  center: originLeaf,
-  zoom: GAMEPLAY_ZOOM_LEVEL,
-  minZoom: GAMEPLAY_ZOOM_LEVEL,
-  maxZoom: GAMEPLAY_ZOOM_LEVEL,
-  zoomControl: false,
-  scrollWheelZoom: false,
-});
-// populates map with a background tile layer
-leaflet
-  .tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
-    maxZoom: 19,
-    attribution:
-      '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-  })
-  .addTo(map);
-
-// text for geon coin amount
-const geonCoinText = document.createElement("h1");
-geonCoinText.innerHTML = "coin amount: " + coinCount;
-app.append(geonCoinText);
-
-// adds marker to location
-playerMarker.addTo(map);
-const knownCells = new Map<string, Cell>(); // track cells already processed
-
-// Latitude/Longitude pairing
-interface Latlng {
+interface LatLng {
   lat: number;
   lng: number;
 }
-
-// drawing assist
+interface GeoCoin {
+  serial: number;
+  i: number;
+  j: number;
+}
 interface GeoRect {
-  topL: Latlng;
-  bottomR: Latlng;
+  topL: LatLng;
+  bottomR: LatLng;
 }
 
-// update coin count
-function updateCounter() {
-  geonCoinText.innerHTML = "coin amount: " + coinCount;
-}
+// map setup
+const map = leaflet.map("map", {
+  center: OAKES_CLASSROOM,
+  zoom: GAMEPLAY_ZOOM_LEVEL,
+  minZoom: 14,
+  maxZoom: GAMEPLAY_ZOOM_LEVEL,
+  zoomControl: true,
+  scrollWheelZoom: false,
+});
+leaflet.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+  maxZoom: 19,
+  attribution:
+    '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+}).addTo(map);
 
-function getRect(cell: Cell): GeoRect {
+// player marker
+const playerMarker = leaflet.marker(OAKES_CLASSROOM);
+playerMarker.addTo(map);
+
+// cache logic
+const knownCells = new Map<string, Cell>();
+function getCellForPoint(point: LatLng): Cell {
   return {
-    topL: {
-      lat: cell.i * TILE_DEGREES,
-      lng: cell.j * TILE_DEGREES,
-    },
+    i: Math.floor(point.lat / TILE_DEGREES),
+    j: Math.floor(point.lng / TILE_DEGREES),
+  };
+}
+function getRectForCell(cell: Cell): GeoRect {
+  return {
+    topL: { lat: cell.i * TILE_DEGREES, lng: cell.j * TILE_DEGREES },
     bottomR: {
       lat: (cell.i + 1) * TILE_DEGREES,
       lng: (cell.j + 1) * TILE_DEGREES,
@@ -81,96 +72,84 @@ function getRect(cell: Cell): GeoRect {
   };
 }
 
-function createCell(cell: Cell) {
-  const bounds = getRect(cell);
-  let coinAmount = Math.round(100 * luck([cell.i, cell.j].toString())) + 1; // determines coin amount
+// inventory UI
+const inventoryHeader = document.createElement("h1");
+inventoryHeader.innerText = "Inventory";
+app.append(inventoryHeader);
 
-  const rect = leaflet.rectangle(
-    [
-      [bounds.topL.lat, bounds.topL.lng],
-      [bounds.bottomR.lat, bounds.bottomR.lng],
-    ],
-    {
-      color: "#FF0000", // red border color for cache
-      weight: 1,
-      fillColor: "#EFBF04", // gold fill color for cache
-      fillOpacity: 0.5, // transparency
-    },
-  );
-  rect.bindPopup(() => {
-    const popUpBox = document.createElement("div");
+// creates coin count
+const geonCoinText = document.createElement("div");
+geonCoinText.id = "coinCountText";
+app.appendChild(geonCoinText);
 
-    popUpBox.innerHTML = `
-                <div>A cache here at "${cell.i},${cell.j}". There are <span id="value">${coinAmount}</span> coins here </div>
-                <button id="get" style="background-color: green; color: white; border: none; padding: 10px 20px; margin: 5px; cursor: pointer;">take coin</button>
-                <button id="give" style="background-color: blue; color: white; border: none; padding: 10px 20px; margin: 5px; cursor: pointer;">give coin</button>`;
+// inventory: coin count display
+function updateInventory() {
+  const coinCount = playerCoins.length; // counts total coins
+  geonCoinText.innerHTML = `Coins: ${coinCount}`; // displays total coin count
+}
 
-    const getButton = popUpBox.querySelector<HTMLButtonElement>("#get")!;
-    const giveButton = popUpBox.querySelector<HTMLButtonElement>("#give")!;
+// coin manager
+function handleCacheInteraction(cell: Cell, cacheCoins: GeoCoin[]) {
+  const popupContent = document.createElement("div");
+  const updatePopup = () => {
+    popupContent.innerHTML = `
+      <div>Cache at ${cell.i}, ${cell.j}: ${cacheCoins.length} coins</div>
+      <button id="take">Take Coin</button>
+      <button id="give">Give Coin</button>
+    `;
+  };
+  updatePopup();
 
-    // hover effects
-    getButton.addEventListener("mouseover", () => {
-      getButton.style.backgroundColor = "#45a049"; // color lightens on hover
-    });
-    getButton.addEventListener("mouseout", () => {
-      getButton.style.backgroundColor = "green"; // reset to default color
-    });
-
-    giveButton.addEventListener("mouseover", () => {
-      giveButton.style.backgroundColor = "#5c88d1"; // color lightens on hover
-    });
-    giveButton.addEventListener("mouseout", () => {
-      giveButton.style.backgroundColor = "blue"; // reset to default color
-    });
-
-    // take button
-    getButton.addEventListener("click", () => {
-      if (coinAmount != 0) {
-        coinAmount--;
-        popUpBox.querySelector<HTMLSpanElement>("#value")!.innerHTML =
-          coinAmount.toString(); // Update the number of coins
-        coinCount++;
-        updateCounter();
-      }
-    });
-
-    // give button
-    giveButton.addEventListener("click", () => {
-      if (coinCount != 0) {
-        coinAmount++;
-        popUpBox.querySelector<HTMLSpanElement>("#value")!.innerHTML =
-          coinAmount.toString();
-        coinCount--;
-        updateCounter();
-      }
-    });
-
-    return popUpBox;
+  popupContent.querySelector("#take")?.addEventListener("click", () => {
+    if (cacheCoins.length > 0) {
+      playerCoins.push(cacheCoins.pop()!);
+      updateInventory();
+      updatePopup();
+    }
   });
+  popupContent.querySelector("#give")?.addEventListener("click", () => {
+    if (playerCoins.length > 0) {
+      cacheCoins.push(playerCoins.pop()!);
+      updateInventory();
+      updatePopup();
+    }
+  });
+
+  return popupContent;
+}
+
+// spawn cache
+function spawnCache(cell: Cell) {
+  if (knownCells.has(`${cell.i},${cell.j}`)) return;
+
+  knownCells.set(`${cell.i},${cell.j}`, cell);
+  const bounds = getRectForCell(cell);
+  const coinCount = Math.round(100 * luck(`${cell.i},${cell.j}`)) + 1;
+  const cacheCoins: GeoCoin[] = Array.from({ length: coinCount }, () => ({
+    serial: serialCounter++,
+    i: cell.i,
+    j: cell.j,
+  }));
+
+  const rect = leaflet.rectangle([
+    [bounds.topL.lat, bounds.topL.lng],
+    [bounds.bottomR.lat, bounds.bottomR.lng],
+  ]);
+  rect.bindPopup(() => handleCacheInteraction(cell, cacheCoins));
   rect.addTo(map);
 }
 
-function determineSpawn(cell: Cell, chance: number) {
-  const luckCheck = luck([cell.i, cell.j].toString());
-  if (luckCheck <= chance) {
-    createCell(cell);
-  }
-}
-
-function locationCheck(min: number, max: number) {
-  for (let x = min; x <= max; x++) {
-    for (let y = min; y <= max; y++) {
-      // only processes cells if it has not been processed yet
-      const cellKey = `${x},${y}`;
-      if (!knownCells.has(cellKey)) {
-        const cell = { i: x, j: y };
-        determineSpawn(cell, CACHE_SPAWN_PROBABILITY);
-        knownCells.set(cellKey, cell); // marks cell as processed
+// generate caches
+function generateCaches(center: Cell, radius: number) {
+  for (let i = -radius; i <= radius; i++) {
+    for (let j = -radius; j <= radius; j++) {
+      if (luck(`${center.i + i},${center.j + j}`) < CACHE_SPAWN_PROBABILITY) {
+        spawnCache({ i: center.i + i, j: center.j + j });
       }
     }
   }
 }
 
-// generates caches around player location by calling locationCheck
-locationCheck(-NEIGHBORHOOD_SIZE, NEIGHBORHOOD_SIZE);
-locationCheck(-NEIGHBORHOOD_SIZE, NEIGHBORHOOD_SIZE);
+// initialize game
+generateCaches(getCellForPoint(OAKES_CLASSROOM), NEIGHBORHOOD_SIZE);
+updateInventory();
