@@ -11,6 +11,7 @@ const GAMEPLAY_ZOOM_LEVEL = 19;
 const TILE_DEGREES = 1e-4;
 const NEIGHBORHOOD_SIZE = 8;
 const CACHE_SPAWN_PROBABILITY = 0.1;
+const MOVE_STEP = TILE_DEGREES; // move 0.0001 degrees at a time
 const OAKES_CLASSROOM = leaflet.latLng(36.98949379578401, -122.06277128548504);
 
 let serialCounter = 0;
@@ -35,6 +36,39 @@ interface GeoRect {
   bottomR: LatLng;
 }
 
+// momento pattern for cache state
+interface Momento<T> {
+  toMomento(): T;
+  fromMomento(momento: T): void;
+}
+
+class Cache implements Momento<string> {
+  private coins: GeoCoin[];
+
+  constructor(coins: GeoCoin[]) {
+    this.coins = coins;
+  }
+
+  getCoins() {
+    return this.coins;
+  }
+
+  setCoins(coins: GeoCoin[]) {
+    this.coins = coins;
+  }
+
+  // implement momento method
+  toMomento(): string {
+    return JSON.stringify(this.coins); // serialize coins into a JSON string
+  }
+
+  fromMomento(momento: string): void {
+    this.coins = JSON.parse(momento); // deserialize JSON string into coins
+  }
+}
+
+const cacheStates = new Map<string, Cache>();
+
 // map setup
 const map = leaflet.map("map", {
   center: OAKES_CLASSROOM,
@@ -56,12 +90,14 @@ playerMarker.addTo(map);
 
 // cache logic
 const knownCells = new Map<string, Cell>();
+
 function getCellForPoint(point: LatLng): Cell {
   return {
     i: Math.floor(point.lat / TILE_DEGREES),
     j: Math.floor(point.lng / TILE_DEGREES),
   };
 }
+
 function getRectForCell(cell: Cell): GeoRect {
   return {
     topL: { lat: cell.i * TILE_DEGREES, lng: cell.j * TILE_DEGREES },
@@ -74,7 +110,6 @@ function getRectForCell(cell: Cell): GeoRect {
 
 // inventory UI
 const inventoryHeader = document.createElement("h1");
-inventoryHeader.innerText = "Inventory";
 app.append(inventoryHeader);
 
 // creates coin count
@@ -88,7 +123,7 @@ function updateInventory() {
   geonCoinText.innerHTML = `Coins: ${coinCount}`; // displays total coin count
 }
 
-// coin manager
+// momento cache interaction
 function handleCacheInteraction(cell: Cell, cacheCoins: GeoCoin[]) {
   const popupContent = document.createElement("div");
   const updatePopup = () => {
@@ -124,12 +159,23 @@ function spawnCache(cell: Cell) {
 
   knownCells.set(`${cell.i},${cell.j}`, cell);
   const bounds = getRectForCell(cell);
-  const coinCount = Math.round(100 * luck(`${cell.i},${cell.j}`)) + 1;
-  const cacheCoins: GeoCoin[] = Array.from({ length: coinCount }, () => ({
-    serial: serialCounter++,
-    i: cell.i,
-    j: cell.j,
-  }));
+  const cacheId = `${cell.i},${cell.j}`;
+
+  // restore or create cache
+  let cacheCoins: GeoCoin[] = [];
+  if (cacheStates.has(cacheId)) {
+    const cache = cacheStates.get(cacheId)!;
+    cacheCoins = JSON.parse(cache.toMomento()); // deserialize coins from momento string
+  } else {
+    const coinCount = Math.round(100 * luck(`${cell.i},${cell.j}`)) + 1;
+    cacheCoins = Array.from({ length: coinCount }, () => ({
+      serial: serialCounter++,
+      i: cell.i,
+      j: cell.j,
+    }));
+    const newCache = new Cache(cacheCoins);
+    cacheStates.set(cacheId, newCache); // save new cache
+  }
 
   const rect = leaflet.rectangle([
     [bounds.topL.lat, bounds.topL.lng],
@@ -149,6 +195,42 @@ function generateCaches(center: Cell, radius: number) {
     }
   }
 }
+
+// movement controls
+function movePlayer(dLat: number, dLng: number) {
+  const currentLatLng = playerMarker.getLatLng();
+  const newLatLng = leaflet.latLng(
+    currentLatLng.lat + dLat,
+    currentLatLng.lng + dLng,
+  );
+  playerMarker.setLatLng(newLatLng);
+  map.panTo(newLatLng);
+
+  // regenerate caches
+  generateCaches(getCellForPoint(newLatLng), NEIGHBORHOOD_SIZE);
+}
+
+// movement container
+const movementControls = document.createElement("div");
+movementControls.id = "movement-controls";
+
+// movement buttons
+const directions = [
+  { id: "up", text: "⬆️", dLat: MOVE_STEP, dLng: 0 },
+  { id: "left", text: "⬅️", dLat: 0, dLng: -MOVE_STEP },
+  { id: "down", text: "⬇️", dLat: -MOVE_STEP, dLng: 0 },
+  { id: "right", text: "➡️", dLat: 0, dLng: MOVE_STEP },
+];
+
+directions.forEach(({ id, text, dLat, dLng }) => {
+  const button = document.createElement("button");
+  button.id = id;
+  button.innerText = text;
+  button.addEventListener("click", () => movePlayer(dLat, dLng));
+  movementControls.appendChild(button);
+});
+
+app.insertBefore(movementControls, inventoryHeader);
 
 // initialize game
 generateCaches(getCellForPoint(OAKES_CLASSROOM), NEIGHBORHOOD_SIZE);
